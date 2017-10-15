@@ -16,7 +16,18 @@
 namespace Oven
 {
 
-using ButtonStart = GpioInputB10;
+namespace Ui {
+	using ButtonStart = xpcc::GpioInverted<GpioInputB10>;
+	using ButtonStop = xpcc::GpioInverted<GpioInputB11>;
+
+	inline void
+	initialize()
+	{
+		ButtonStart::setInput(Gpio::InputType::PullUp);
+		ButtonStop::setInput(Gpio::InputType::PullUp);
+	}
+}
+
 
 namespace Display {
 	using Sda = GpioB9;
@@ -36,6 +47,16 @@ namespace Display {
 		display.setCursor(0,16);
 		display << "reflow-oven-xpcc";
 		display.update();
+	}
+}
+
+namespace Fan {
+	using Pin = GpioOutputA9;
+
+	inline void
+	initialize()
+	{
+		Pin::setOutput(true);
 	}
 }
 

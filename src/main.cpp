@@ -193,7 +193,7 @@ public:
 		while (1)
 		{
 			if(debounceTimer.execute()) {
-				debounceStart.update(Oven::ButtonStart::read());
+				debounceStart.update(Oven::Ui::ButtonStart::read());
 				if(debounceStart.getValue() && reflowProcessTimeout.isStopped()) {
 					reflowProcessTimeout.restart(reflowProcessDuration);
 					Oven::Pwm::enable();
@@ -266,10 +266,12 @@ int main()
 	Usart1::initialize<Board::systemClock, xpcc::Uart::B115200>(10);
 	logger << "Info: reflow-oven-xpcc starting ..." << xpcc::endl;
 
-	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
-
 	Oven::Pwm::initialize();
+	Oven::Fan::initialize();
 	Oven::Display::initialize();
+	Oven::Ui::initialize();
+
+	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
 
 	while (1)
 	{
