@@ -33,7 +33,7 @@ namespace Display {
 
 		display.initializeBlocking();
 		display.setFont(xpcc::font::Assertion);
-		display.setCursor(0,20);
+		display.setCursor(0,16);
 		display << "reflow-oven-xpcc";
 		display.update();
 	}
@@ -42,9 +42,10 @@ namespace Display {
 namespace Pwm {
 	using Timer = Timer1;
 	using Pin = GpioOutputA8;
+	static uint16_t Overflow;
 
 	struct systemClockTimer1 {
-		static constexpr uint32_t Timer1 = Board::systemClock::Apb1; // `?
+		static constexpr uint32_t Timer1 = Board::systemClock::Apb2;
 	};
 
 	inline void
@@ -53,11 +54,12 @@ namespace Pwm {
 		Pin::connect(Timer::Channel1);
 		Timer::enable();
 		Timer::setMode(Timer::Mode::UpCounter);
-		Timer::setPeriod<systemClockTimer1>(100 * 1000); // 0.1s
+		Overflow = Timer::setPeriod<systemClockTimer1>(200 * 1000); // 0.2s
 		Timer::configureOutputChannel(1, Timer::OutputCompareMode::Pwm, 0);
 		Timer::applyAndReset();
 		Timer::start();
 	}
+
 
 	inline void
 	set(uint16_t value)

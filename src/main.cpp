@@ -12,6 +12,7 @@
 #include <xpcc/io/iostream.hpp>
 #include <xpcc/processing.hpp>
 #include <xpcc/driver/temperature/ltc2984.hpp>
+#include <array>
 
 #include "oven.hpp"
 
@@ -94,20 +95,41 @@ private:
 Pt100SensorThread pt100SensorThread;
 
 
-int16_t reflowCurve(xpcc::Timestamp time) {
-	(void) time;
-	return 150;
-}
-
-xpcc::Pid<int16_t, 10> pid(0.4, 0.5, 0, 200, 512);
+xpcc::Pid<int32_t> pid(5.f, 0.5f, 0, 200, Oven::Pwm::Overflow);
 //v_target = ... // setpoint
 //v_input  = ... // input value
 //pid.update(v_target - v_input);
 //pwm = pid.getValue();
 
 xpcc::Timeout reflowProcessTimeout(0);
-static const xpcc::Timestamp reflowProcessDuration = 600 * 1000;
+static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
 
+
+// time in milliseconds and temperature in millidegree celsius
+// Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
+int32_t reflowCurve(uint32_t remaining) {
+	uint32_t time = reflowProcessDuration.getTime() - remaining;
+	if(time < 90000) {
+		// Ramp to soak: 0s to 1:30 | 1.5°C/s = 1.5°mC/ms
+		return 15000 + static_cast<int32_t>(1.5f * time);
+	}
+	else if(time < 180000) {
+		// Preheat/soak: 1:30 to 3:00 | 150°C to 180°C
+		return 150000 + static_cast<int32_t>(0.3333f * (time - 90000));
+	}
+	else if(time < 225000) {
+		// Ramp to peak: 3:00 to 3:45 | 180°C to 245°C (1.4444°C/s)
+		return 180000 + static_cast<int32_t>(1.4444f * (time - 180000));
+	}
+	else if (time < 255000) {
+		// Reflow: 3:45 to 4:15 | 245°C
+		return 245000;
+	}
+	else {
+		// Cooling: 4:15 to 6:00
+		return 0;
+	}
+}
 
 class PidThread : public xpcc::pt::Protothread
 {
@@ -128,8 +150,8 @@ public:
 				temp = pt100SensorThread.getLastTemp();
 				if(temp.isValid()) {
 					logger << "Temperature: actual " << temp.getTemperatureFloat() << "C, target: " << reflowCurve(reflowProcessTimeout.remaining()) << "C" << xpcc::endl;
-					pid.update(reflowCurve(reflowProcessTimeout.remaining()) - temp.getTemperatureInteger());
-					Oven::Pwm::set(pid.getValue()); // >= 0 ?!?
+					pid.update(reflowCurve(reflowProcessTimeout.remaining()) - static_cast<int32_t>(temp.getTemperatureFloat() * 1000) );
+					Oven::Pwm::set(pid.getValue() > 0 ? static_cast<uint16_t>(pid.getValue()) : 0); // >= 0 ?!?
 					// Display
 				}
 				else {
@@ -160,7 +182,7 @@ PidThread pidThread;
 class UiThread : public xpcc::pt::Protothread
 {
 public:
-	UiThread() : uiTimer(50), debounceStart(5)
+	UiThread() : debounceTimer(50), displayTimer(250), tempPlotTimer(reflowProcessDuration.getTime() / tempPlotLength), debounceStart(5), tempPlot{}
 	{
 	}
 
@@ -170,30 +192,67 @@ public:
 		PT_BEGIN();
 		while (1)
 		{
-			PT_WAIT_UNTIL(uiTimer.execute());
-			debounceStart.update(Oven::ButtonStart::read());
-			if(debounceStart.getValue() && reflowProcessTimeout.isStopped()) {
-				reflowProcessTimeout.restart(reflowProcessDuration);
-				Oven::Pwm::enable();
-				logger << "Info: Starting reflow process." << xpcc::endl;
-				// Display...
+			if(debounceTimer.execute()) {
+				debounceStart.update(Oven::ButtonStart::read());
+				if(debounceStart.getValue() && reflowProcessTimeout.isStopped()) {
+					reflowProcessTimeout.restart(reflowProcessDuration);
+					Oven::Pwm::enable();
+					logger << "Info: Starting reflow process." << xpcc::endl;
+					tempPlotIndex = 0;
+					tempPlot.fill(0);
+				}
+				else if(debounceStart.getValue()) {
+					logger << "Error: Reflow process runing." << xpcc::endl;
+				}
 			}
-			else if(debounceStart.getValue()) {
-				logger << "Error: Reflow process runing." << xpcc::endl;
-				// Display...
+			if(displayTimer.execute()) {
+				Oven::Display::display.clear();
+
+				temp = pt100SensorThread.getLastTemp();
+				Oven::Display::display.setCursor(86,16);
+				if(temp.isValid()) {
+					Oven::Display::display.printf("%3.1fC", temp.getTemperatureFloat());
+				}
+				else {
+					Oven::Display::display.printf("TERROR");
+				}
+
+				Oven::Display::display.setCursor(0,16);
+				if(reflowProcessTimeout.isArmed()) {
+					time = reflowProcessDuration.getTime() - static_cast<uint32_t>(reflowProcessTimeout.remaining());
+					Oven::Display::display.printf("%lu:%02lu", time / 60, time % 60);
+					Oven::Display::display << " ON";
+				}
+				else {
+					Oven::Display::display << "OFF";
+				}
+				for (uint8_t i = 0;i < tempPlotLength; i++) {
+					Oven::Display::display.drawPixel(i, 64 - tempPlot[i]);
+				}
 			}
-			temp = pt100SensorThread.getLastTemp();
-			if(temp.isValid()) {
-				Oven::Display::display.setCursor(10,50);
-				Oven::Display::display.printf("%.1f", temp.getTemperatureFloat());
+			if(tempPlotTimer.execute()) {
+				temp = pt100SensorThread.getLastTemp();
+				// Scale temperature from 0..260°C (fixed point int 1/1024°C) to 48px display height
+				tempPlot[tempPlotIndex] = temp.isValid() ? static_cast<uint8_t>(temp.getTemperatureFixed() * 48 / (260*1024)) : 0;
+				tempPlotIndex++;
+				if(tempPlotIndex >= tempPlotLength) {
+					tempPlotIndex = 0;
+				}
 			}
+			PT_YIELD();
 		}
 		PT_END();
 	}
 private:
-	xpcc::PeriodicTimer uiTimer;
+	xpcc::PeriodicTimer debounceTimer;
+	xpcc::PeriodicTimer displayTimer;
+	xpcc::PeriodicTimer tempPlotTimer;
 	xpcc::filter::Debounce<uint8_t> debounceStart;
 	xpcc::ltc2984::Data temp;
+	uint32_t time;
+	static constexpr size_t tempPlotLength = 128;
+	std::array<uint8_t, tempPlotLength> tempPlot;
+	size_t tempPlotIndex = 0;
 };
 UiThread uiThread;
 
@@ -206,6 +265,8 @@ int main()
 	GpioOutputB6::connect(Usart1::Tx);
 	Usart1::initialize<Board::systemClock, xpcc::Uart::B115200>(10);
 	logger << "Info: reflow-oven-xpcc starting ..." << xpcc::endl;
+
+	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
 
 	Oven::Pwm::initialize();
 	Oven::Display::initialize();
