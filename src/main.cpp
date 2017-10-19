@@ -17,7 +17,7 @@
 #include "oven.hpp"
 
 
-xpcc::IODeviceWrapper< Usart2, xpcc::IOBuffer::BlockIfFull > device;
+xpcc::IODeviceWrapper< Usart1, xpcc::IOBuffer::BlockIfFull > device;
 xpcc::IOStream logger(device);
 
 
@@ -38,7 +38,7 @@ public:
 	bool
 	update()
 	{
-		PT_BEGIN()
+		PT_BEGIN();
 
 		// Configure the device
 		PT_CALL(tempSensor.configureChannel(xpcc::ltc2984::Channel::Ch2, xpcc::ltc2984::Configuration::rsense(
@@ -214,7 +214,7 @@ public:
 					Oven::Display::display.printf("%3.1fC", temp.getTemperatureFloat());
 				}
 				else {
-					Oven::Display::display.printf("TERROR");
+					Oven::Display::display.printf(" T-ERR");
 				}
 
 				Oven::Display::display.setCursor(0,16);
@@ -229,6 +229,7 @@ public:
 				for (uint8_t i = 0;i < tempPlotLength; i++) {
 					Oven::Display::display.drawPixel(i, 64 - tempPlot[i]);
 				}
+				Oven::Display::display.update();
 			}
 			if(tempPlotTimer.execute()) {
 				temp = pt100SensorThread.getLastTemp();
@@ -259,6 +260,12 @@ UiThread uiThread;
 
 int main()
 {
+	//Disable JTAG
+	AFIO->MAPR |= AFIO_MAPR_SWJ_CFG_JTAGDISABLE;
+	// Enable AxB clocks
+	RCC->APB2ENR |= (RCC_APB2ENR_AFIOEN | RCC_APB2ENR_TIM1EN | RCC_APB2ENR_USART1EN);
+	RCC->APB1ENR |= (RCC_APB1ENR_I2C1EN | RCC_APB1ENR_SPI2EN);
+
 	Board::initialize();
 	Board::LedGreen::setOutput(xpcc::Gpio::Low);
 
@@ -266,6 +273,15 @@ int main()
 	Usart1::initialize<Board::systemClock, xpcc::Uart::B115200>(10);
 	logger << "Info: reflow-oven-xpcc starting ..." << xpcc::endl;
 
+
+	// Connect the GPIOs to the SPIs alternate function
+	Sck::connect(SpiMaster::Sck);
+	Mosi::connect(SpiMaster::Mosi);
+	Miso::connect(SpiMaster::Miso);
+	SpiMaster::initialize<Board::systemClock, MHz72/64>();
+
+	AFIO->MAPR = (AFIO->MAPR & ~(3 << 4)) | (2 << 4);
+	AFIO->MAPR = (AFIO->MAPR & ~(3 << 6)) | (1 << 6);
 	Oven::Pwm::initialize();
 	Oven::Fan::initialize();
 	Oven::Display::initialize();

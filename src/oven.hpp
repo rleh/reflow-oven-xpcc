@@ -32,7 +32,7 @@ namespace Ui {
 namespace Display {
 	using Sda = GpioB9;
 	using Scl = GpioB8;
-	using MyI2cMaster = I2cMaster1 ;
+	using MyI2cMaster = I2cMaster1;
 	xpcc::Ssd1306<MyI2cMaster> display;
 
 	inline void
@@ -40,7 +40,7 @@ namespace Display {
 	{
 		Sda::connect(MyI2cMaster::Sda);
 		Scl::connect(MyI2cMaster::Scl);
-		MyI2cMaster::initialize<Board::systemClock, 100000>();
+		MyI2cMaster::initialize<Board::systemClock, 420000, xpcc::Tolerance::TwentyPercent>();
 
 		display.initializeBlocking();
 		display.setFont(xpcc::font::Assertion);
