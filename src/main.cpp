@@ -105,14 +105,14 @@ xpcc::Pid<int32_t> pid(5.f, 0.5f, 0, 200, Oven::Pwm::Overflow);
 //pid.update(v_target - v_input);
 //pwm = pid.getValue();
 
-xpcc::Timeout reflowProcessTimeout(0);
+OvenTimer ovenTimer(xpcc::Timestamp(0));
+
 static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
 
 
 // time in milliseconds and temperature in millidegree celsius
 // Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
-int32_t reflowCurve(uint32_t remaining) {
-	uint32_t time = reflowProcessDuration.getTime() - remaining;
+int32_t reflowCurve(uint32_t time) {
 	if(time < 90000) {
 		// Ramp to soak: 0s to 1:30 | 1.5°C/s = 1.5°mC/ms
 		return 15000 + static_cast<int32_t>(1.5f * time);
@@ -149,13 +149,19 @@ public:
 
 		while (1)
 		{
-			if(!reflowProcessTimeout.isStopped()) {
+			if(ovenTimer.isRunning()) {
 				PT_WAIT_UNTIL(pidTimer.execute());
 				temp = pt100SensorThread.getLastTemp();
 				if(temp.isValid()) {
-					logger << "Temperature: actual " << temp.getTemperatureFloat() << "C, target: " << reflowCurve(reflowProcessTimeout.remaining()) << "C" << xpcc::endl;
-					pid.update(reflowCurve(reflowProcessTimeout.remaining()) - static_cast<int32_t>(temp.getTemperatureFloat() * 1000) );
-					Oven::Pwm::set(pid.getValue() > 0 ? static_cast<uint16_t>(pid.getValue()) : 0); // >= 0 ?!?
+					logger << "Temperature: actual ";
+					logger.printf("%03.2f", temp.getTemperatureFloat());
+					logger << "C, target: " << reflowCurve(ovenTimer.elapsed().getTime()) << "C" << xpcc::endl;
+					logger << "Time: " << ovenTimer.elapsed().getTime() << "ms" << xpcc::endl;
+					logger << "Start " << ovenTimer.startTime << ", End " << ovenTimer.endTime << ", Now " << xpcc::Clock::now() << xpcc::endl;
+					pid.update(reflowCurve(ovenTimer.elapsed().getTime()) - static_cast<int32_t>(temp.getTemperatureFloat() * 1000));
+					logger << "Pid: " << pid.getValue() << xpcc::endl;
+					pwmValue = (pid.getValue() > 0) ? static_cast<uint16_t>(pid.getValue()) : 0;
+					Oven::Pwm::set(pwmValue); // >= 0 ?!?
 					// Display
 				}
 				else {
@@ -166,6 +172,7 @@ public:
 			else {
 				Oven::Pwm::disable();
 			}
+			PT_YIELD();
 		}
 
 		PT_END();
@@ -173,6 +180,8 @@ public:
 private:
 	xpcc::PeriodicTimer pidTimer;
 	xpcc::ltc2984::Data temp;
+public:
+	uint16_t pwmValue;
 };
 PidThread pidThread;
 
@@ -198,8 +207,8 @@ public:
 		{
 			if(debounceTimer.execute()) {
 				debounceStart.update(Oven::Ui::ButtonStart::read());
-				if(debounceStart.getValue() && reflowProcessTimeout.isStopped()) {
-					reflowProcessTimeout.restart(reflowProcessDuration);
+				if(debounceStart.getValue() && !ovenTimer.isRunning()) {
+					ovenTimer.restart(reflowProcessDuration);
 					Oven::Pwm::enable();
 					logger << "Info: Starting reflow process." << xpcc::endl;
 					tempPlotIndex = 0;
@@ -213,7 +222,7 @@ public:
 				Oven::Display::display.clear();
 
 				temp = pt100SensorThread.getLastTemp();
-				Oven::Display::display.setCursor(86,16);
+				Oven::Display::display.setCursor(86,0);
 				if(temp.isValid()) {
 					Oven::Display::display.printf("%3.1fC", temp.getTemperatureFloat());
 				}
@@ -221,17 +230,19 @@ public:
 					Oven::Display::display.printf(" T-ERR");
 				}
 
-				Oven::Display::display.setCursor(0,16);
-				if(reflowProcessTimeout.isArmed()) {
-					time = reflowProcessDuration.getTime() - static_cast<uint32_t>(reflowProcessTimeout.remaining());
+				Oven::Display::display.setCursor(0,0);
+				if(ovenTimer.isRunning()) {
+					time = ovenTimer.elapsed().getTime() / 1000u;
 					Oven::Display::display.printf("%lu:%02lu", time / 60, time % 60);
-					Oven::Display::display << " ON";
+					//Oven::Display::display << " ON";
+					//Oven::Display::display << " " << (static_cast<uint32_t>(pidThread.pwmValue) * 100ul / Oven::Pwm::Overflow) << "%";
+					Oven::Display::display << pidThread.pwmValue;
 				}
 				else {
 					Oven::Display::display << "OFF";
 				}
 				for (uint8_t i = 0;i < tempPlotLength; i++) {
-					Oven::Display::display.drawPixel(i, 64 - tempPlot[i]);
+					Oven::Display::display.drawPixel(i, 63 - tempPlot[i]);
 				}
 				Oven::Display::display.update();
 			}
@@ -242,6 +253,7 @@ public:
 				tempPlotIndex++;
 				if(tempPlotIndex >= tempPlotLength) {
 					tempPlotIndex = 0;
+					tempPlot.fill(0);
 				}
 			}
 			PT_YIELD();

@@ -103,4 +103,33 @@ namespace Pwm {
 
 } // namespace Oven
 
+class OvenTimer {
+public:
+	OvenTimer(xpcc::Timestamp duration)
+	{
+		restart(duration);
+	}
+
+	void restart(xpcc::Timestamp duration)
+	{
+		startTime = xpcc::Clock::now();
+		endTime = xpcc::Clock::now() + duration;
+	}
+
+	xpcc::Timestamp elapsed()
+	{
+		xpcc::Timestamp now = xpcc::Clock::now();
+		return (now < endTime) ? now - startTime : 0;
+	}
+
+	bool isRunning()
+	{
+		return (xpcc::Clock::now() < endTime);
+	}
+
+public:
+	xpcc::Timestamp startTime;
+	xpcc::Timestamp endTime;
+};
+
 #endif	// OVEN_HPP
