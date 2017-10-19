@@ -40,6 +40,10 @@ public:
 	{
 		PT_BEGIN();
 
+		// Wait before initializing LTC298x
+		this->timeout.restart(300);
+		PT_WAIT_UNTIL(this->timeout.isExpired());
+
 		// Configure the device
 		PT_CALL(tempSensor.configureChannel(xpcc::ltc2984::Channel::Ch2, xpcc::ltc2984::Configuration::rsense(
 												xpcc::ltc2984::Configuration::Rsense::Resistance_t(2000*1024)
@@ -89,7 +93,7 @@ public:
 private:
 	xpcc::Ltc2984<SpiMaster, Cs> tempSensor;
 	xpcc::ltc2984::Data temp;
-	//xpcc::Timeout timeout;
+	xpcc::Timeout timeout;
 	//xpcc::Timestamp stamp;
 };
 Pt100SensorThread pt100SensorThread;
