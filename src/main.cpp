@@ -16,7 +16,6 @@
 
 #include "oven.hpp"
 
-
 xpcc::IODeviceWrapper< Usart1, xpcc::IOBuffer::BlockIfFull > device;
 xpcc::IOStream logger(device);
 
@@ -41,19 +40,22 @@ public:
 		PT_BEGIN();
 
 		// Wait before initializing LTC298x
-		this->timeout.restart(300);
-		PT_WAIT_UNTIL(this->timeout.isExpired());
+		while(!PT_CALL(tempSensor.ping())) {
+			logger << "LTC2984 not reachable" << xpcc::endl;
+			this->timeout.restart(100);
+			PT_WAIT_UNTIL(this->timeout.isExpired());
+		}
 
 		// Configure the device
 		PT_CALL(tempSensor.configureChannel(xpcc::ltc2984::Channel::Ch2, xpcc::ltc2984::Configuration::rsense(
 												xpcc::ltc2984::Configuration::Rsense::Resistance_t(2000*1024)
 												)));
 		PT_CALL(tempSensor.configureChannel(xpcc::ltc2984::Channel::Ch4, xpcc::ltc2984::Configuration::rtd(
-									 xpcc::ltc2984::Configuration::SensorType::Pt100,
+									 xpcc::ltc2984::Configuration::SensorType::Pt1000,
 									 xpcc::ltc2984::Configuration::Rtd::RsenseChannel::Ch2_Ch1,
 									 xpcc::ltc2984::Configuration::Rtd::Wires::Wire4,
 									 xpcc::ltc2984::Configuration::Rtd::ExcitationMode::Rotation_Sharing,
-									 xpcc::ltc2984::Configuration::Rtd::ExcitationCurrent::Current_500uA,
+									 xpcc::ltc2984::Configuration::Rtd::ExcitationCurrent::Current_100uA,
 									 xpcc::ltc2984::Configuration::Rtd::RtdCurve::European
 									 )));
 		tempSensor.enableChannel(xpcc::ltc2984::Configuration::MuxChannel::Ch4);
@@ -99,16 +101,9 @@ private:
 Pt100SensorThread pt100SensorThread;
 
 
-xpcc::Pid<int32_t> pid(5.f, 0.5f, 0, 200, Oven::Pwm::Overflow);
-//v_target = ... // setpoint
-//v_input  = ... // input value
-//pid.update(v_target - v_input);
-//pwm = pid.getValue();
-
+xpcc::Pid<int32_t, 1000> pid;
 OvenTimer ovenTimer(xpcc::Timestamp(0));
-
 static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
-
 
 // time in milliseconds and temperature in millidegree celsius
 // Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
@@ -155,14 +150,12 @@ public:
 				if(temp.isValid()) {
 					logger << "Temperature: actual ";
 					logger.printf("%03.2f", temp.getTemperatureFloat());
-					logger << "C, target: " << reflowCurve(ovenTimer.elapsed().getTime()) << "C" << xpcc::endl;
+					logger << "C, target: " << reflowCurve(ovenTimer.elapsed().getTime()) / 1000 << "C" << xpcc::endl;
 					logger << "Time: " << ovenTimer.elapsed().getTime() << "ms" << xpcc::endl;
-					logger << "Start " << ovenTimer.startTime << ", End " << ovenTimer.endTime << ", Now " << xpcc::Clock::now() << xpcc::endl;
 					pid.update(reflowCurve(ovenTimer.elapsed().getTime()) - static_cast<int32_t>(temp.getTemperatureFloat() * 1000));
-					logger << "Pid: " << pid.getValue() << xpcc::endl;
-					pwmValue = (pid.getValue() > 0) ? static_cast<uint16_t>(pid.getValue()) : 0;
-					Oven::Pwm::set(pwmValue); // >= 0 ?!?
-					// Display
+					pwmValue = static_cast<uint16_t>(std::max<int32_t>(0l, pid.getValue()));
+					logger << "Pwm: " << pwmValue << xpcc::endl;
+					Oven::Pwm::set(pwmValue);
 				}
 				else {
 					logger << "Error: Invalid temperature measurement" << xpcc::endl;
@@ -188,10 +181,8 @@ PidThread pidThread;
 
 
 
-/**
- * UiThread updates the display andreads the
- * button states (with debouncing).
- */
+// UiThread updates the display andreads the
+// button states (with debouncing).
 class UiThread : public xpcc::pt::Protothread
 {
 public:
@@ -214,9 +205,6 @@ public:
 					tempPlotIndex = 0;
 					tempPlot.fill(0);
 				}
-				else if(debounceStart.getValue()) {
-					logger << "Error: Reflow process runing." << xpcc::endl;
-				}
 			}
 			if(displayTimer.execute()) {
 				Oven::Display::display.clear();
@@ -234,9 +222,8 @@ public:
 				if(ovenTimer.isRunning()) {
 					time = ovenTimer.elapsed().getTime() / 1000u;
 					Oven::Display::display.printf("%lu:%02lu", time / 60, time % 60);
-					//Oven::Display::display << " ON";
-					//Oven::Display::display << " " << (static_cast<uint32_t>(pidThread.pwmValue) * 100ul / Oven::Pwm::Overflow) << "%";
-					Oven::Display::display << pidThread.pwmValue;
+					Oven::Display::display.setCursor(39,0);
+					Oven::Display::display << pidThread.pwmValue * 100 / Oven::Pwm::Overflow << "%";
 				}
 				else {
 					Oven::Display::display << "OFF";
@@ -289,21 +276,26 @@ int main()
 	Usart1::initialize<Board::systemClock, xpcc::Uart::B115200>(10);
 	logger << "Info: reflow-oven-xpcc starting ..." << xpcc::endl;
 
-
 	// Connect the GPIOs to the SPIs alternate function
 	Sck::connect(SpiMaster::Sck);
 	Mosi::connect(SpiMaster::Mosi);
 	Miso::connect(SpiMaster::Miso);
 	SpiMaster::initialize<Board::systemClock, MHz72/64>();
 
-	AFIO->MAPR = (AFIO->MAPR & ~(3 << 4)) | (2 << 4);
-	AFIO->MAPR = (AFIO->MAPR & ~(3 << 6)) | (1 << 6);
+	AFIO->MAPR = (AFIO->MAPR & ~(3 << 4)) | (2 << 4); // USART3_REMAP[1:0]: 11: Full remap (TX/PD8, RX/PD9, CK/PD10, CTS/PD11, RTS/PD12)
+	AFIO->MAPR = (AFIO->MAPR & ~(3 << 6)) | (1 << 6); // TIM1_REMAP[1:0] = “01” (partial remap)
 	Oven::Pwm::initialize();
+
 	Oven::Fan::initialize();
 	Oven::Display::initialize();
 	Oven::Ui::initialize();
 
+	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(5.f, 0.5f, 0, 200, Oven::Pwm::Overflow));
+
 	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
+
+	// Fan is always on
+	Oven::Fan::Pin::set();
 
 	while (1)
 	{

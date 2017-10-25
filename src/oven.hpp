@@ -63,7 +63,7 @@ namespace Fan {
 namespace Pwm {
 	using Timer = Timer1;
 	using Pin = GpioOutputA8;
-	static uint16_t Overflow;
+	static uint16_t Overflow = 0xFFFF;
 
 	struct systemClockTimer1 {
 		static constexpr uint32_t Timer1 = Board::systemClock::Apb2;
@@ -75,7 +75,9 @@ namespace Pwm {
 		Pin::connect(Timer::Channel1);
 		Timer::enable();
 		Timer::setMode(Timer::Mode::UpCounter);
-		Overflow = Timer::setPeriod<systemClockTimer1>(200 * 1000); // 0.2s
+		// Pwm frequency: 5Hz | 0.2s
+		Timer::setPrescaler(220); // 72 * 1000 * 1000 / 5 / 0xFFFF = 220
+		Timer::setOverflow(Overflow);
 		Timer::configureOutputChannel(1, Timer::OutputCompareMode::Pwm, 0);
 		Timer::applyAndReset();
 		Timer::start();
