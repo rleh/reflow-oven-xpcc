@@ -105,27 +105,39 @@ xpcc::Pid<int32_t, 1000> pid;
 OvenTimer ovenTimer(xpcc::Timestamp(0));
 static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
 
+using Point = xpcc::Pair<uint32_t, int32_t>;
 // time in milliseconds and temperature in millidegree celsius
 // Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
+Point reflowCurveNoPbPoints[7] =
+{
+	{ 0,		15000 },
+	{ 90000,	150000 },
+	{ 180000,	180000 },
+	{ 225000,	245000 },
+	{ 255000,	245000 },
+	{ 255001,	0 },
+	{ 360000,	0 }
+};
+xpcc::interpolation::Linear<Point> reflowCurveNoPb(reflowCurveNoPbPoints, 7);
+
+enum class ReflowMode : uint8_t {
+	NoPb,
+	Pb,
+	ConstTemperature,
+};
+ReflowMode reflowMode = ReflowMode::NoPb;
+
+int32_t constTemperature = 85000;
+
 int32_t reflowCurve(uint32_t time) {
-	if(time < 90000) {
-		// Ramp to soak: 0s to 1:30 | 1.5°C/s = 1.5°mC/ms
-		return 15000 + static_cast<int32_t>(1.5f * time);
-	}
-	else if(time < 180000) {
-		// Preheat/soak: 1:30 to 3:00 | 150°C to 180°C
-		return 150000 + static_cast<int32_t>(0.3333f * (time - 90000));
-	}
-	else if(time < 225000) {
-		// Ramp to peak: 3:00 to 3:45 | 180°C to 245°C (1.4444°C/s)
-		return 180000 + static_cast<int32_t>(1.4444f * (time - 180000));
-	}
-	else if (time < 255000) {
-		// Reflow: 3:45 to 4:15 | 245°C
-		return 245000;
-	}
-	else {
-		// Cooling: 4:15 to 6:00
+	switch (reflowMode) {
+	case ReflowMode::NoPb:
+		return reflowCurveNoPb.interpolate(time);
+	case ReflowMode::Pb:
+		return reflowCurveNoPb.interpolate(time);
+	case ReflowMode::ConstTemperature:
+		return constTemperature;
+	default:
 		return 0;
 	}
 }
