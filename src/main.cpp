@@ -290,7 +290,7 @@ int main()
 	Oven::Display::initialize();
 	Oven::Ui::initialize();
 
-	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(5.f, 0.5f, 0, 200, Oven::Pwm::Overflow));
+	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(3.5f, 0, 0, 200, Oven::Pwm::Overflow));
 
 	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
 
