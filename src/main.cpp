@@ -127,7 +127,7 @@ enum class ReflowMode : uint8_t {
 };
 ReflowMode reflowMode = ReflowMode::NoPb;
 
-int32_t constTemperature = 85000;
+int16_t constTemperature = 50;
 
 int32_t reflowCurve(uint32_t time) {
 	switch (reflowMode) {
@@ -136,7 +136,7 @@ int32_t reflowCurve(uint32_t time) {
 	case ReflowMode::Pb:
 		return reflowCurveNoPb.interpolate(time);
 	case ReflowMode::ConstTemperature:
-		return constTemperature;
+		return constTemperature * 1000;
 	default:
 		return 0;
 	}
@@ -198,7 +198,13 @@ PidThread pidThread;
 class UiThread : public xpcc::pt::Protothread
 {
 public:
-	UiThread() : debounceTimer(50), displayTimer(250), tempPlotTimer(reflowProcessDuration.getTime() / tempPlotLength), debounceStart(5), tempPlot{}
+	UiThread() :
+		debounceTimer(50),
+		displayTimer(250),
+		tempPlotTimer(reflowProcessDuration.getTime() / tempPlotLength),
+		debounceStartButton(5),
+		debounceStopButton(5),
+		tempPlot{}
 	{
 	}
 
@@ -209,13 +215,49 @@ public:
 		while (1)
 		{
 			if(debounceTimer.execute()) {
-				debounceStart.update(Oven::Ui::ButtonStart::read());
-				if(debounceStart.getValue() && !ovenTimer.isRunning()) {
-					ovenTimer.restart(reflowProcessDuration);
-					Oven::Pwm::enable();
-					logger << "Info: Starting reflow process." << xpcc::endl;
-					tempPlotIndex = 0;
-					tempPlot.fill(0);
+				// Start/temperature button
+				debounceStartButton.update(Oven::Ui::ButtonStart::read());
+				if(debounceStartButton.getValue()) {
+					if(!ovenTimer.isRunning()) {
+						// Start reflow process
+						ovenTimer.restart(reflowProcessDuration);
+						Oven::Pwm::enable();
+						logger << "Info: Starting reflow process." << xpcc::endl;
+						tempPlotIndex = 0;
+						tempPlot.fill(0);
+					}
+					else {
+						// Increase temperature (only in ConstTemperature mode)
+						constTemperature += 5;
+						if(constTemperature > 260) {
+							constTemperature = 50;
+						}
+					}
+				}
+				// Stop/mode button
+				debounceStopButton.update(Oven::Ui::ButtonStop::read());
+				if(debounceStopButton.getValue()) {
+					if(ovenTimer.isRunning()) {
+						// stop reflow process if ovenTimer is running
+						ovenTimer.restart(0);
+						Oven::Pwm::disable();
+						logger << "Info: Stopped reflow process." << xpcc::endl;
+					}
+					else {
+						// switch reflow mode if oven is idling
+						switch (reflowMode) {
+						case ReflowMode::NoPb:
+							reflowMode = ReflowMode::Pb;
+							break;
+						case ReflowMode::Pb:
+							reflowMode = ReflowMode::ConstTemperature;
+							constTemperature = 50;
+							break;
+						case ReflowMode::ConstTemperature:
+							reflowMode = ReflowMode::NoPb;
+							break;
+						}
+					}
 				}
 			}
 			if(displayTimer.execute()) {
@@ -227,7 +269,20 @@ public:
 					Oven::Display::display.printf("%3.1fC", temp.getTemperatureFloat());
 				}
 				else {
-					Oven::Display::display.printf(" T-ERR");
+					Oven::Display::display << " T-ERR";
+				}
+
+				Oven::Display::display.setCursor(91,16);
+				switch (reflowMode) {
+				case ReflowMode::NoPb:
+					Oven::Display::display << "NoPb";
+					break;
+				case ReflowMode::Pb:
+					Oven::Display::display << "  Pb";
+					break;
+				case ReflowMode::ConstTemperature:
+					Oven::Display::display << "T" << constTemperature;
+					break;
 				}
 
 				Oven::Display::display.setCursor(0,0);
@@ -263,7 +318,8 @@ private:
 	xpcc::PeriodicTimer debounceTimer;
 	xpcc::PeriodicTimer displayTimer;
 	xpcc::PeriodicTimer tempPlotTimer;
-	xpcc::filter::Debounce<uint8_t> debounceStart;
+	xpcc::filter::Debounce<uint8_t> debounceStartButton;
+	xpcc::filter::Debounce<uint8_t> debounceStopButton;
 	xpcc::ltc2984::Data temp;
 	uint32_t time;
 	static constexpr size_t tempPlotLength = 128;
