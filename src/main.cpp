@@ -288,7 +288,7 @@ public:
 					Oven::Display::display << " T-ERR";
 				}
 
-				Oven::Display::display.setCursor(91,16);
+				Oven::Display::display.setCursor(0,16);
 				switch (reflowMode) {
 				case ReflowMode::NoPb:
 					Oven::Display::display << "NoPb";
@@ -313,6 +313,12 @@ public:
 				}
 				for (uint8_t i = 0;i < tempPlotLength; i++) {
 					Oven::Display::display.drawPixel(i, 63 - tempPlot[i]);
+				}
+				if(ovenTimer.isRunning()) {
+					Oven::Display::display.setColor(xpcc::glcd::Color::black());
+					for (uint8_t i = 0; i < tempPlotLength; i+=2) {
+						Oven::Display::display.drawPixel(i, 63 - (reflowCurve(i * reflowProcessDuration.getTime() / 128) * 48 / 260000));
+					}
 				}
 				Oven::Display::display.update();
 			}
