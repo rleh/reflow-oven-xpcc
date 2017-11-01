@@ -106,6 +106,7 @@ OvenTimer ovenTimer(xpcc::Timestamp(0));
 static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
 
 using Point = xpcc::Pair<uint32_t, int32_t>;
+
 // time in milliseconds and temperature in millidegree celsius
 // Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
 Point reflowCurveNoPbPoints[7] =
@@ -119,6 +120,18 @@ Point reflowCurveNoPbPoints[7] =
 	{ 360000,	0 }
 };
 xpcc::interpolation::Linear<Point> reflowCurveNoPb(reflowCurveNoPbPoints, 7);
+
+Point reflowCurvePbPoints[7] =
+{
+	{ 0,		15000 },
+	{ 90000,	120000 },
+	{ 180000,	150000 },
+	{ 225000,	230000 },
+	{ 255000,	230000 },
+	{ 255001,	0 },
+	{ 360000,	0 }
+};
+xpcc::interpolation::Linear<Point> reflowCurvePb(reflowCurveNoPbPoints, 7);
 
 enum class ReflowMode : uint8_t {
 	NoPb,
@@ -134,7 +147,7 @@ int32_t reflowCurve(uint32_t time) {
 	case ReflowMode::NoPb:
 		return reflowCurveNoPb.interpolate(time);
 	case ReflowMode::Pb:
-		return reflowCurveNoPb.interpolate(time);
+		return reflowCurvePb.interpolate(time);
 	case ReflowMode::ConstTemperature:
 		return constTemperature * 1000;
 	default:
