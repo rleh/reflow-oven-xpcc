@@ -212,9 +212,10 @@ class UiThread : public xpcc::pt::Protothread
 {
 public:
 	UiThread() :
-		debounceTimer(50),
-		displayTimer(250),
+		debounceTimer(10),
+		displayTimer(100),
 		tempPlotTimer(reflowProcessDuration.getTime() / tempPlotLength),
+		buttonPressed(0),
 		debounceStartButton(5),
 		debounceStopButton(5),
 		tempPlot{}
@@ -230,7 +231,8 @@ public:
 			if(debounceTimer.execute()) {
 				// Start/temperature button
 				debounceStartButton.update(Oven::Ui::ButtonStart::read());
-				if(debounceStartButton.getValue()) {
+				if(debounceStartButton.getValue() && buttonPressed.isExpired()) {
+					buttonPressed.restart(500);
 					if(!ovenTimer.isRunning()) {
 						// Start reflow process
 						ovenTimer.restart(reflowProcessDuration);
@@ -249,7 +251,8 @@ public:
 				}
 				// Stop/mode button
 				debounceStopButton.update(Oven::Ui::ButtonStop::read());
-				if(debounceStopButton.getValue()) {
+				if(debounceStopButton.getValue() && buttonPressed.isExpired()) {
+					buttonPressed.restart(500);
 					if(ovenTimer.isRunning()) {
 						// stop reflow process if ovenTimer is running
 						ovenTimer.restart(0);
@@ -331,6 +334,7 @@ private:
 	xpcc::PeriodicTimer debounceTimer;
 	xpcc::PeriodicTimer displayTimer;
 	xpcc::PeriodicTimer tempPlotTimer;
+	xpcc::Timeout buttonPressed;
 	xpcc::filter::Debounce<uint8_t> debounceStartButton;
 	xpcc::filter::Debounce<uint8_t> debounceStopButton;
 	xpcc::ltc2984::Data temp;
