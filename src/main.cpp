@@ -112,11 +112,11 @@ using Point = xpcc::Pair<uint32_t, int32_t>;
 Point reflowCurveNoPbPoints[7] =
 {
 	{ 0,		15000 },
-	{ 90000,	150000 },
+	{ 60000,	125000 },
 	{ 180000,	180000 },
 	{ 225000,	245000 },
-	{ 255000,	245000 },
-	{ 255001,	0 },
+	{ 265000,	245000 },
+	{ 270000,	0 },
 	{ 360000,	0 }
 };
 xpcc::interpolation::Linear<Point> reflowCurveNoPb(reflowCurveNoPbPoints, 7);
@@ -381,7 +381,7 @@ int main()
 	Oven::Display::initialize();
 	Oven::Ui::initialize();
 
-	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(3.5f, 0, 0, 200, Oven::Pwm::Overflow));
+	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(2.25f, -0.15f, 0, 50, Oven::Pwm::Overflow));
 
 	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
 
