@@ -105,27 +105,52 @@ xpcc::Pid<int32_t, 1000> pid;
 OvenTimer ovenTimer(xpcc::Timestamp(0));
 static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
 
+using Point = xpcc::Pair<uint32_t, int32_t>;
+
 // time in milliseconds and temperature in millidegree celsius
 // Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
+Point reflowCurveNoPbPoints[7] =
+{
+	{ 0,		15000 },
+	{ 80000,	115000 },
+	{ 180000,	175000 },
+	{ 225000,	240000 },
+	{ 265000,	245000 },
+	{ 285000,	0 },
+	{ 360000,	0 }
+};
+xpcc::interpolation::Linear<Point> reflowCurveNoPb(reflowCurveNoPbPoints, 7);
+
+Point reflowCurvePbPoints[7] =
+{
+	{ 0,		15000 },
+	{ 90000,	120000 },
+	{ 180000,	150000 },
+	{ 225000,	230000 },
+	{ 255000,	230000 },
+	{ 255001,	0 },
+	{ 360000,	0 }
+};
+xpcc::interpolation::Linear<Point> reflowCurvePb(reflowCurveNoPbPoints, 7);
+
+enum class ReflowMode : uint8_t {
+	NoPb,
+	Pb,
+	ConstTemperature,
+};
+ReflowMode reflowMode = ReflowMode::NoPb;
+
+int16_t constTemperature = 50;
+
 int32_t reflowCurve(uint32_t time) {
-	if(time < 90000) {
-		// Ramp to soak: 0s to 1:30 | 1.5°C/s = 1.5°mC/ms
-		return 15000 + static_cast<int32_t>(1.5f * time);
-	}
-	else if(time < 180000) {
-		// Preheat/soak: 1:30 to 3:00 | 150°C to 180°C
-		return 150000 + static_cast<int32_t>(0.3333f * (time - 90000));
-	}
-	else if(time < 225000) {
-		// Ramp to peak: 3:00 to 3:45 | 180°C to 245°C (1.4444°C/s)
-		return 180000 + static_cast<int32_t>(1.4444f * (time - 180000));
-	}
-	else if (time < 255000) {
-		// Reflow: 3:45 to 4:15 | 245°C
-		return 245000;
-	}
-	else {
-		// Cooling: 4:15 to 6:00
+	switch (reflowMode) {
+	case ReflowMode::NoPb:
+		return reflowCurveNoPb.interpolate(time);
+	case ReflowMode::Pb:
+		return reflowCurvePb.interpolate(time);
+	case ReflowMode::ConstTemperature:
+		return constTemperature * 1000;
+	default:
 		return 0;
 	}
 }
@@ -186,7 +211,14 @@ PidThread pidThread;
 class UiThread : public xpcc::pt::Protothread
 {
 public:
-	UiThread() : debounceTimer(50), displayTimer(250), tempPlotTimer(reflowProcessDuration.getTime() / tempPlotLength), debounceStart(5), tempPlot{}
+	UiThread() :
+		debounceTimer(10),
+		displayTimer(100),
+		tempPlotTimer(reflowProcessDuration.getTime() / tempPlotLength),
+		buttonPressed(0),
+		debounceStartButton(5),
+		debounceStopButton(5),
+		tempPlot{}
 	{
 	}
 
@@ -197,13 +229,51 @@ public:
 		while (1)
 		{
 			if(debounceTimer.execute()) {
-				debounceStart.update(Oven::Ui::ButtonStart::read());
-				if(debounceStart.getValue() && !ovenTimer.isRunning()) {
-					ovenTimer.restart(reflowProcessDuration);
-					Oven::Pwm::enable();
-					logger << "Info: Starting reflow process." << xpcc::endl;
-					tempPlotIndex = 0;
-					tempPlot.fill(0);
+				// Start/temperature button
+				debounceStartButton.update(Oven::Ui::ButtonStart::read());
+				if(debounceStartButton.getValue() && buttonPressed.isExpired()) {
+					buttonPressed.restart(500);
+					if(!ovenTimer.isRunning()) {
+						// Start reflow process
+						ovenTimer.restart(reflowProcessDuration);
+						Oven::Pwm::enable();
+						logger << "Info: Starting reflow process." << xpcc::endl;
+						tempPlotIndex = 0;
+						tempPlot.fill(0);
+					}
+					else {
+						// Increase temperature (only in ConstTemperature mode)
+						constTemperature += 5;
+						if(constTemperature > 260) {
+							constTemperature = 50;
+						}
+					}
+				}
+				// Stop/mode button
+				debounceStopButton.update(Oven::Ui::ButtonStop::read());
+				if(debounceStopButton.getValue() && buttonPressed.isExpired()) {
+					buttonPressed.restart(500);
+					if(ovenTimer.isRunning()) {
+						// stop reflow process if ovenTimer is running
+						ovenTimer.restart(0);
+						Oven::Pwm::disable();
+						logger << "Info: Stopped reflow process." << xpcc::endl;
+					}
+					else {
+						// switch reflow mode if oven is idling
+						switch (reflowMode) {
+						case ReflowMode::NoPb:
+							reflowMode = ReflowMode::Pb;
+							break;
+						case ReflowMode::Pb:
+							reflowMode = ReflowMode::ConstTemperature;
+							constTemperature = 50;
+							break;
+						case ReflowMode::ConstTemperature:
+							reflowMode = ReflowMode::NoPb;
+							break;
+						}
+					}
 				}
 			}
 			if(displayTimer.execute()) {
@@ -215,7 +285,20 @@ public:
 					Oven::Display::display.printf("%3.1fC", temp.getTemperatureFloat());
 				}
 				else {
-					Oven::Display::display.printf(" T-ERR");
+					Oven::Display::display << " T-ERR";
+				}
+
+				Oven::Display::display.setCursor(0,16);
+				switch (reflowMode) {
+				case ReflowMode::NoPb:
+					Oven::Display::display << "NoPb";
+					break;
+				case ReflowMode::Pb:
+					Oven::Display::display << "  Pb";
+					break;
+				case ReflowMode::ConstTemperature:
+					Oven::Display::display << "T" << constTemperature;
+					break;
 				}
 
 				Oven::Display::display.setCursor(0,0);
@@ -230,6 +313,12 @@ public:
 				}
 				for (uint8_t i = 0;i < tempPlotLength; i++) {
 					Oven::Display::display.drawPixel(i, 63 - tempPlot[i]);
+				}
+				if(ovenTimer.isRunning()) {
+					Oven::Display::display.setColor(xpcc::glcd::Color::black());
+					for (uint8_t i = 0; i < tempPlotLength; i+=2) {
+						Oven::Display::display.drawPixel(i, 63 - (reflowCurve(i * reflowProcessDuration.getTime() / 128) * 48 / 260000));
+					}
 				}
 				Oven::Display::display.update();
 			}
@@ -251,7 +340,9 @@ private:
 	xpcc::PeriodicTimer debounceTimer;
 	xpcc::PeriodicTimer displayTimer;
 	xpcc::PeriodicTimer tempPlotTimer;
-	xpcc::filter::Debounce<uint8_t> debounceStart;
+	xpcc::Timeout buttonPressed;
+	xpcc::filter::Debounce<uint8_t> debounceStartButton;
+	xpcc::filter::Debounce<uint8_t> debounceStopButton;
 	xpcc::ltc2984::Data temp;
 	uint32_t time;
 	static constexpr size_t tempPlotLength = 128;
@@ -290,7 +381,7 @@ int main()
 	Oven::Display::initialize();
 	Oven::Ui::initialize();
 
-	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(3.5f, 0, 0, 200, Oven::Pwm::Overflow));
+	pid.setParameter(xpcc::Pid<int32_t, 1000>::Parameter(2.1337f, -0.25f, 3, 40, Oven::Pwm::Overflow));
 
 	logger << "Debug: Timer1 Overflow: " << Oven::Pwm::Overflow << xpcc::endl;
 

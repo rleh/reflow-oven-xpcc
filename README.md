@@ -15,6 +15,20 @@ Build using [the xpcc microcontroller framework](http://xpcc.io).
 * 5V Power supply
 
 
+# Ui
+
+The oven has two buttons
+### Start / Temperature button
+This button starts the reflow process or increases the temperature by 5°C if the reflow process is already running.
+
+### Stop / Mode button
+To stop a running reflow process press this button.
+If no reflow process is running the button is used to switch between the reflow modes (displayes in the upper right corner of the display):
+* NoPb
+* Pb
+* Constant Temperature (e.g. T85 = 85°C)
+
+
 ## Get the code
 
 ```sh
