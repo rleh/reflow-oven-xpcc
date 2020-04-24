@@ -1,0 +1,27 @@
+<library>
+  <repositories>
+    <!-- path to modm repository -->
+    <repository>
+      <path>../../modm/repo.lb</path>
+    </repository>
+  </repositories>
+  <extends>modm:mini-f411</extends>
+  <options>
+    <option name="modm:build:build.path">../build/stm32f411ceu_mini_f411/reflow</option>
+  </options>
+  <modules>
+    <module>modm:build:scons</module>
+    <module>modm:debug</module>
+    <module>modm:platform:heap</module>
+    <module>modm:math:filter</module>
+    <module>modm:math:interpolation</module>
+    <module>modm:processing:protothread</module>
+    <module>modm:driver:ssd1306</module>
+    <module>modm:container</module>
+    <module>modm:platform:i2c:1</module>
+    <module>modm:platform:timer:2</module>
+    <module>modm:platform:timer:3</module>
+    <module>modm:platform:adc:1</module>
+    <module>modm:platform:uart:1</module>
+  </modules>
+</library>
