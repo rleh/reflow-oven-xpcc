@@ -10,6 +10,10 @@
 
 #include <modm/board.hpp>
 #include <modm/driver/display/ssd1306.hpp>
+#include <modm/math/filter/moving_average.hpp>
+#include <modm/driver/adc/adc_sampler.hpp>
+
+#define UTILS_LP_FAST(value, sample, filter_constant)	(value -= (filter_constant) * ((value) - (sample)))
 
 // STM32F103 Blue Pill Pinout: http://wiki.stm32duino.com/index.php?title=File:Bluepillpinout.gif
 
@@ -17,14 +21,14 @@ namespace Oven
 {
 
 namespace Ui {
-	using ButtonStart = modm::platform::GpioInverted<GpioInputB4>;
-	using ButtonStop = modm::platform::GpioInverted<GpioInputB5>;
+	using ButtonStart = GpioInputB5;
+	using ButtonStop = GpioInputB4;
 
 	inline void
 	initialize()
 	{
-		ButtonStart::setInput(Gpio::InputType::PullUp);
-		ButtonStop::setInput(Gpio::InputType::PullUp);
+		ButtonStart::setInput();
+		ButtonStop::setInput();
 	}
 }
 
@@ -33,15 +37,15 @@ namespace Display {
 	using Sda = GpioB7;
 	using Scl = GpioB6;
 	using MyI2cMaster = I2cMaster1;
-	modm::Ssd1306<MyI2cMaster> display(0x78);
+	modm::Ssd1306<MyI2cMaster> display;
 
 	inline void
 	initialize()
 	{
         MyI2cMaster::connect<Scl::Scl, Sda::Sda>();
-        MyI2cMaster::initialize<Board::SystemClock, 420_kHz>();
+        MyI2cMaster::initialize<Board::SystemClock, 100_kHz>();
 
-		display.initializeBlocking();
+        display.initializeBlocking();
 		display.setFont(modm::font::Assertion);
 		display.setCursor(0,16);
 		display << "reflow-oven-modm";
@@ -114,6 +118,7 @@ namespace Pwm {
 	inline void
 	initialize()
 	{
+	    Pin::setOutput();
 		Timer::connect<Pin::Ch2>();
 		Timer::enable();
 		Timer::setMode(Timer::Mode::UpCounter);
@@ -129,7 +134,7 @@ namespace Pwm {
 	inline void
 	set(uint16_t value)
 	{
-		Timer::setCompareValue(1, value);
+		Timer::setCompareValue(2, value);
 	}
 
 	inline void
@@ -174,24 +179,71 @@ public:
 namespace PT1000 {
 
     using Adc = Adc1;
-    using Pin = GpioInputA1;
+    using AdcIn1 = GpioInputA1;
+    using AdcIn2 = GpioInputA2;
+    using AdcIn3 = GpioInputA3;
+
+    using Pin1 = GpioOutputB0;
+    using Pin2 = GpioOutputB1;
+    using Pin3 = GpioOutputB2;
+
+//    using AdcIn4 = GpioInputA4;
 
     inline void
     initialize() {
+        Pin1::setOutput();
+        Pin2::setOutput();
+        Pin3::setOutput();
+        Adc::connect<AdcIn1::In1, AdcIn2::In2, AdcIn3::In3>();
         Adc::initialize<Board::SystemClock>();
-        Adc::connect<Pin::In1>();
-        Adc::setPinChannel<Pin>(Adc::SampleTime::Cycles480);
     }
 
-    inline float
-    readTemp(){
-        int sensorValue = Adc::readChannel(modm::platform::Adc1::Channel::Channel1); // PA1
-        float voltage = sensorValue * ( 3.3f / 4096.0f );
-        constexpr float U = 5.0f;
-        constexpr float R2 = 1000.0f;
-        float R1 = R2 * ( U / voltage - 1.0f );
-        constexpr float alpha = 940.98f / 250.0f; // https://delta-r.de/de/aktuelles/wissen/pt1000-widerstandstabelle
-        return R1 / alpha;
+    const std::array<modm::platform::Adc1::Channel, 4> channels{
+            modm::platform::Adc1::Channel::Channel1,
+            modm::platform::Adc1::Channel::Channel2,
+            modm::platform::Adc1::Channel::Channel3//,
+//            modm::platform::Adc1::Channel::Channel4
+    };
+
+    std::array<float,3> readTemp(){
+        std::array<uint16_t, 3> sensorValues;
+
+        Pin1::set(1);
+        modm::delay(20us);
+        sensorValues.at(0) = Adc::readChannel(channels.at(0));
+        Pin1::set(0);
+        modm::delay(4us);
+
+        Pin2::set(1);
+        modm::delay(20us);
+        sensorValues.at(1) = Adc::readChannel(channels.at(1));
+        Pin2::set(0);
+        modm::delay(4us);
+
+        Pin3::set(1);
+        modm::delay(20us);
+        sensorValues.at(2) = Adc::readChannel(channels.at(2));
+        Pin3::set(0);
+        modm::delay(4us);
+
+        const float VCC = 3.3f;
+        static std::array<float,3> voltages{1.5,1.5,1.5};
+        for ( std::size_t i=0; i<3; i++){
+            const float sample = sensorValues.at(i) * VCC / 4096.0f;
+            UTILS_LP_FAST(voltages.at(i), sample, 0.1);
+        }
+        // calculate reference voltage:
+        const float U = 3.3;//voltages.at(3) * 2.0; // [V] the voltage divider for measuring the supply voltage has two 1kOhm resistors
+
+
+        std::array<float,3> temps;
+        constexpr std::array<float,3> R2 = {980.f, 980.0f, 980.0f}; // [Ohm] gemessen
+        constexpr float alpha = 2.0 * 980.0 / 250.0f; // [Ohm/°C] for PT1000, see https://delta-r.de/de/aktuelles/wissen/pt1000-widerstandstabelle
+        for ( std::size_t i = 0; i<3; i++) {
+            const float R1 = R2.at(i) * ( U / voltages.at(i) - 1.0f ); // [Ohm]
+            temps.at(i) = (R1-2000.0f) / alpha;
+        }
+        return temps;
     }
 
 }

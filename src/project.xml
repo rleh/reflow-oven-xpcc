@@ -17,6 +17,7 @@
     <module>modm:math:interpolation</module>
     <module>modm:processing:protothread</module>
     <module>modm:driver:ssd1306</module>
+    <module>modm:driver:adc_sampler</module>
     <module>modm:container</module>
     <module>modm:platform:i2c:1</module>
     <module>modm:platform:timer:2</module>

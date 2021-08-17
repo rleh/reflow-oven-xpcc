@@ -56,6 +56,10 @@ Point reflowCurvePbPoints[7] =
 	{ 255001,	0 },
 	{ 360000,	0 }
 };
+
+uint32_t startCooldownPb = 255001;
+uint32_t startCooldownNoPb = 285000;
+
 modm::interpolation::Linear<Point> reflowCurvePb(reflowCurveNoPbPoints, 7);
 
 enum class ReflowMode : uint8_t {
@@ -80,6 +84,35 @@ int32_t reflowCurve(uint32_t time) {
 	}
 }
 
+class AdcThread : public modm::pt::Protothread
+{
+public:
+    AdcThread() : adcTimer(10ms) {
+    }
+
+    bool update() {
+        PT_BEGIN();
+        while(1) {
+            PT_WAIT_UNTIL(adcTimer.execute());
+            temps = PT1000::readTemp();
+            PT_YIELD();
+        }
+        PT_END();
+    }
+    std::array<float,3> getTemps() const {
+        return temps;
+    }
+
+    float getPcbTemp() const {
+        return temps.at(0);
+    }
+
+private:
+    modm::PeriodicTimer adcTimer;
+    std::array<float, 3> temps{0,0,0};
+};
+AdcThread adcThread;
+
 class PidThread : public modm::pt::Protothread
 {
 public:
@@ -96,7 +129,7 @@ public:
 		{
 			if(ovenTimer.isRunning()) {
 				PT_WAIT_UNTIL(pidTimer.execute());
-				temp = PT1000::readTemp();
+				temp = adcThread.getPcbTemp();
 				if( 0.0f <= temp && temp <= 400.0f ) {
 					MODM_LOG_INFO << "Temperature: actual ";
                     MODM_LOG_INFO << printf("%03.2f", temp);
@@ -120,6 +153,10 @@ public:
 
 		PT_END();
 	}
+
+	uint16_t getPwmValue(){
+	 return pwmValue;
+	}
 private:
 	modm::PeriodicTimer pidTimer;
 	float temp;
@@ -138,7 +175,7 @@ class UiThread : public modm::pt::Protothread
 public:
 	UiThread() :
 		debounceTimer(10),
-		displayTimer(100),
+		displayTimer(200),
 		tempPlotTimer(reflowProcessDuration / tempPlotLength),
 		buttonPressed(0),
 		debounceStartButton(5),
@@ -181,6 +218,7 @@ public:
 						// stop reflow process if ovenTimer is running
 						ovenTimer.restart(modm::Duration(0));
 						Oven::Pwm::disable();
+                        Oven::Buzzer::disable();
 						MODM_LOG_INFO << "Stopped reflow process." << modm::endl;
 					}
 					else {
@@ -201,24 +239,42 @@ public:
 				}
 			}
 			if(displayTimer.execute()) {
+
 				Oven::Display::display.clear();
 
-				temp = PT1000::readTemp();
-				Oven::Display::display.setCursor(86,0);
-				if(0.0f <= temp && temp <= 400.0f) {
-					Oven::Display::display.printf("%3.1fC", temp);
+				auto temp = adcThread.getTemps();
+
+				//if(0.0f <= temp && temp <= 400.0f) {
+				if(true) {
+
+//                    Oven::Display::display.setCursor(80,0);
+//					Oven::Display::display.printf("%d", pidThread.getPwmValue());
+
+                    Oven::Display::display.setCursor(86,0);
+					Oven::Display::display.printf("%3.1fC", temp.at(0));
+//                    Oven::Display::display.setCursor(86,20);
+//					Oven::Display::display.printf("%3.1fC", temp.at(1));
+//                    Oven::Display::display.setCursor(86,40);
+//					Oven::Display::display.printf("%3.1fC", temp.at(2));
 				}
 				else {
 					Oven::Display::display << " T-ERR";
 				}
 
+
 				Oven::Display::display.setCursor(0,16);
 				switch (reflowMode) {
 				case ReflowMode::NoPb:
 					Oven::Display::display << "NoPb";
+                    if(ovenTimer.elapsed().count() >= startCooldownNoPb) {
+                        Oven::Buzzer::enable();
+                    }
 					break;
 				case ReflowMode::Pb:
 					Oven::Display::display << "  Pb";
+                    if(ovenTimer.elapsed().count() >= startCooldownPb) {
+                        Oven::Buzzer::enable();
+                    }
 					break;
 				case ReflowMode::ConstTemperature:
 					Oven::Display::display << "T" << constTemperature;
@@ -247,7 +303,7 @@ public:
 				Oven::Display::display.update();
 			}
 			if(tempPlotTimer.execute()) {
-				temp = PT1000::readTemp();
+				temp = adcThread.getPcbTemp();
 				// Scale temperature from 0..260°C (fixed point int 1/1024°C) to 48px display height
 				tempPlot[tempPlotIndex] = (0.0f <= temp && temp <= 400.f) ? static_cast<uint8_t>(temp * 48 / (260*1024)) : 0;
 				tempPlotIndex++;
@@ -278,6 +334,7 @@ UiThread uiThread;
 
 int main()
 {
+    modm::delay(500ms);
 	Board::initialize();
 	Board::LedGreen::setOutput(modm::Gpio::Low);
 
@@ -288,7 +345,12 @@ int main()
 	Oven::Pwm::initialize();
 	Oven::Fan::initialize();
 	Oven::Display::initialize();
+    PT1000::initialize();
 	Oven::Ui::initialize();
+	Oven::Buzzer::initialize();
+	Oven::Buzzer::enable();
+	modm::delay(500ms);
+	Oven::Buzzer::disable();
 
 	pid.setParameter(modm::Pid<int32_t, 1000>::Parameter(2.1337f, -0.25f, 3, 40, Oven::Pwm::Overflow));
 
@@ -301,6 +363,7 @@ int main()
 
 	while (1)
 	{
+        adcThread.update();
 		pidThread.update();
 		uiThread.update();
 	}
