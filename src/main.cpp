@@ -105,34 +105,6 @@ xpcc::Pid<int32_t, 1000> pid;
 OvenTimer ovenTimer(xpcc::Timestamp(0));
 static const xpcc::Timestamp reflowProcessDuration(360 * 1000);
 
-using Point = xpcc::Pair<uint32_t, int32_t>;
-
-// time in milliseconds and temperature in millidegree celsius
-// Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
-Point reflowCurveNoPbPoints[7] =
-{
-	{ 0,		15000 },
-	{ 80000,	115000 },
-	{ 180000,	175000 },
-	{ 225000,	240000 },
-	{ 265000,	245000 },
-	{ 285000,	0 },
-	{ 360000,	0 }
-};
-xpcc::interpolation::Linear<Point> reflowCurveNoPb(reflowCurveNoPbPoints, 7);
-
-Point reflowCurvePbPoints[7] =
-{
-	{ 0,		15000 },
-	{ 90000,	120000 },
-	{ 180000,	150000 },
-	{ 225000,	230000 },
-	{ 255000,	230000 },
-	{ 255001,	0 },
-	{ 360000,	0 }
-};
-xpcc::interpolation::Linear<Point> reflowCurvePb(reflowCurveNoPbPoints, 7);
-
 enum class ReflowMode : uint8_t {
 	NoPb,
 	Pb,
@@ -145,9 +117,9 @@ int16_t constTemperature = 50;
 int32_t reflowCurve(uint32_t time) {
 	switch (reflowMode) {
 	case ReflowMode::NoPb:
-		return reflowCurveNoPb.interpolate(time);
+		return reflowProfile::noPb.interpolate(time);
 	case ReflowMode::Pb:
-		return reflowCurvePb.interpolate(time);
+		return reflowProfile::pb.interpolate(time);
 	case ReflowMode::ConstTemperature:
 		return constTemperature * 1000;
 	default:
@@ -155,10 +127,10 @@ int32_t reflowCurve(uint32_t time) {
 	}
 }
 
-class PidThread : public xpcc::pt::Protothread
+class ControlThread : public xpcc::pt::Protothread
 {
 public:
-	PidThread() : pidTimer(500)
+	ControlThread() : controlTimer(500)
 	{
 	}
 
@@ -170,7 +142,7 @@ public:
 		while (1)
 		{
 			if(ovenTimer.isRunning()) {
-				PT_WAIT_UNTIL(pidTimer.execute());
+				PT_WAIT_UNTIL(controlTimer.execute());
 				temp = pt100SensorThread.getLastTemp();
 				if(temp.isValid()) {
 					logger << "Temperature: actual ";
@@ -196,12 +168,12 @@ public:
 		PT_END();
 	}
 private:
-	xpcc::PeriodicTimer pidTimer;
+	xpcc::PeriodicTimer controlTimer;
 	xpcc::ltc2984::Data temp;
 public:
 	uint16_t pwmValue;
 };
-PidThread pidThread;
+ControlThread controlThread;
 
 
 
@@ -306,7 +278,7 @@ public:
 					time = ovenTimer.elapsed().getTime() / 1000u;
 					Oven::Display::display.printf("%lu:%02lu", time / 60, time % 60);
 					Oven::Display::display.setCursor(39,0);
-					Oven::Display::display << pidThread.pwmValue * 100 / Oven::Pwm::Overflow << "%";
+					Oven::Display::display << controlThread.pwmValue * 100 / Oven::Pwm::Overflow << "%";
 				}
 				else {
 					Oven::Display::display << "OFF";
@@ -391,7 +363,7 @@ int main()
 	while (1)
 	{
 		pt100SensorThread.update();
-		pidThread.update();
+		controlThread.update();
 		uiThread.update();
 	}
 	return 0;

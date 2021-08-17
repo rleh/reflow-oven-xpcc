@@ -105,6 +105,37 @@ namespace Pwm {
 
 } // namespace Oven
 
+namespace reflowProfile {
+
+	using Point = xpcc::Pair<uint32_t, int32_t>;
+
+	// time in milliseconds and temperature in millidegree celsius
+	// Reflow profile: https://www.compuphase.com/electronics/reflowsolderprofiles.htm
+	Point noPbPoints[7] =
+	{
+		{ 0,		15000 },
+		{ 80000,	115000 },
+		{ 180000,	175000 },
+		{ 225000,	240000 },
+		{ 265000,	245000 },
+		{ 285000,	0 },
+		{ 360000,	0 }
+	};
+	xpcc::interpolation::Linear<Point> noPb(noPbPoints, sizeof(noPbPoints));
+
+	Point pbPoints[7] =
+	{
+		{ 0,		15000 },
+		{ 90000,	120000 },
+		{ 180000,	150000 },
+		{ 225000,	230000 },
+		{ 255000,	230000 },
+		{ 255001,	0 },
+		{ 360000,	0 }
+	};
+	xpcc::interpolation::Linear<Point> pb(pbPoints, sizeof(pbPoints));
+}
+
 class OvenTimer {
 public:
 	OvenTimer(xpcc::Timestamp duration)
